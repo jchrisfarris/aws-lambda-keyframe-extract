@@ -1,0 +1,163 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Deploy Lambda and other resources for the AWS Inventory Tool 2.0
+
+Parameters:
+
+  pDeployBucket:
+    Description: Name of a bucket where all the Lambda deploy Zips are kept
+    Type: String
+
+  pVideoBucket:
+    Description: Bucket where video files are read from and images written to
+    Type: String
+
+  pLambdaZipFile:
+    Description: File Name for the lambdas 
+    Type: String
+    Default: inventory.zip
+  pLambdaPrefix:
+    Description: Where in the bucket the lambdas are stored 
+    Type: String
+    Default: lambda
+
+  pAlarmTopicArn:
+    Description: Topic to send alarm alerts to
+    Type: String
+
+  pExtractFrameRate:
+    Description: FrameRate for extraction in fps. .25 is one frame per 4 sec ; .1 is one frame per 10sec
+    Type: String
+    Default: .25
+
+Resources:
+
+  ExtractLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+        - Sid: EmuLambdaTestTrust
+          Effect: Allow
+          Principal:
+            AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+          Action: sts:AssumeRole
+      Path: /
+      Policies:
+      - PolicyName: S3Access
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Action:
+            - s3:*
+            Effect: Allow
+            Resource: 
+              - !Join ['', ['arn:aws:s3:::', !Ref pVideoBucket , /*]]
+              - !Join ['', ['arn:aws:s3:::', !Ref pVideoBucket ]]
+          - Action:
+            - s3:ListAllMyBuckets
+            - s3:GetBucketLocation
+            Effect: Allow
+            Resource: '*'
+      - PolicyName: LambdaLogging
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Resource: '*'
+            Action:
+            - logs:*
+            Effect: Allow
+      - PolicyName: PublishToSNS
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: "Allow"
+            Action:
+            - sns:publish
+            Resource: 
+              - !Ref ExtractCompletedTopic
+
+  ExtractLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-extract-images"
+      Description: AWS Lamdba extract still frames from video file
+      Handler: index.handler
+      MemorySize: 3008
+      Runtime: python3.6
+      Timeout: 300
+      Role: !GetAtt ExtractLambdaRole.Arn
+      Code:
+        S3Bucket: !Ref pDeployBucket
+        S3Key: !Sub ${pLambdaPrefix}/${pLambdaZipFile}
+      Environment:
+        Variables:
+          OUTPUT_BUCKET: !Ref pVideoBucket
+          STACK_NAME: !Ref AWS::StackName
+          FRAMERATE: !Ref pExtractFrameRate
+          OUTPUT_TOPIC: !Ref ExtractCompletedTopic
+      # Tags inherited from Stac
+
+  TriggerExtractFunctionTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: !Sub "Triggers the image extraction function for ${AWS::StackName}"
+
+  ExtractCompletedTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: !Sub "Where completed image files are published to ${AWS::StackName}"
+
+  ExtractLambdaFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt ExtractLambdaFunction.Arn
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref TriggerExtractFunctionTopic
+      Action: lambda:invokeFunction
+
+  ExtractLambdaFunctionTopicToLambdaSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: !GetAtt [ExtractLambdaFunction, Arn]
+      Protocol: lambda
+      TopicArn: !Ref 'TriggerExtractFunctionTopic' 
+
+  # Quis custodiet ipsos custodes?
+  LambdaInvocationFailureAlarm:
+    Type: "AWS::CloudWatch::Alarm"
+    Properties:
+      ActionsEnabled: true
+      AlarmActions:
+      - !Ref pAlarmTopicArn
+      AlarmDescription: Send an alert if the image extraction function throws invocation errors
+      AlarmName: !Sub "${AWS::StackName}-InvocationFailureAlarm"
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+      - Name: FunctionName
+        Value: !Ref ExtractLambdaFunction
+      EvaluationPeriods: 1
+      # InsufficientDataActions:
+      # - String
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Period: 60
+      Statistic: Sum
+      Threshold: 0
+      TreatMissingData: notBreaching
+
+
+Outputs:
+  NotificationTopicArn:
+    Value: !Ref ExtractCompletedTopic
+    Description: Arn of the Topic to subscribe to for completed images
+
+  TriggerTopicArn:
+    Value: !Ref TriggerExtractFunctionTopic
+    Description: Arn of the Topic to publish S3 Events to
