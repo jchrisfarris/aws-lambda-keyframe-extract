@@ -1,3 +1,9 @@
+
+
+# Repo Specific
+*.tar.gz
+*.zip
+
 # General
 .DS_Store
 .AppleDouble
