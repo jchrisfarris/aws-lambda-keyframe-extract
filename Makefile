@@ -12,7 +12,7 @@ LAMBDA_PACKAGE ?= lambda-$(version).zip
 manifest ?= cloudformation/pht-test-Manifest.yaml
 AWS_LAMBDA_FUNCTION_NAME=image-extract-test-extract-images
 DEPLOYBUCKET ?= pht-deploy
-OBJECT_KEY="$(AWS_LAMBDA_FUNCTION_NAME)/$(LAMBDA_PACKAGE)"
+OBJECT_KEY=$(AWS_LAMBDA_FUNCTION_NAME)/$(LAMBDA_PACKAGE)
 
 
 FFMPEG_URL=https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-64bit-static.tar.xz
@@ -27,7 +27,7 @@ PIP=pip3
 test: cfn-validate
 	echo $(PATH)
 
-deploy: package.zip cfn-deploy 
+deploy: package-upload cfn-deploy 
 
 #
 # Cloudformation Targets
@@ -37,16 +37,13 @@ cfn-validate: $(AWS_TEMPLATE)
 	aws cloudformation validate-template --region us-east-1 --template-body file://$(AWS_TEMPLATE)
 	
 # Deploy the stack
-cfn-deploy: cfn-validate ffmpeg package.zip $(manifest)
-	aws s3 cp $(LAMBDA_PACKAGE) s3://$(DEPLOYBUCKET)/$(OBJECT_KEY)
-	deploy_stack.rb -m $(manifest) pLambdaZipFile=$(OBJECT_KEY) pDeployBucket=$(DEPLOYBUCKET)
+cfn-deploy: cfn-validate  $(manifest)
+	deploy_stack.rb --force -m $(manifest) pLambdaZipFile=$(OBJECT_KEY) pDeployBucket=$(DEPLOYBUCKET) pVersion=$(version)
 
 
 #
 # Lambda function management
 #
-
-
 
 clean: 
 	rm -rf __pycache__ *.zip
@@ -62,6 +59,9 @@ package.zip: index.py ffmpeg
 	zip -r $(LAMBDA_PACKAGE) $^  
 
 package: ffmpeg package.zip
+
+package-upload: package.zip
+	aws s3 cp $(LAMBDA_PACKAGE) s3://$(DEPLOYBUCKET)/$(OBJECT_KEY)
 
 # Update the Lambda Code without modifying the CF Stack
 update: package

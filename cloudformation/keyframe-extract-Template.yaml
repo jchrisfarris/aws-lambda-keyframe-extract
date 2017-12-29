@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Deploy Lambda and other resources for the AWS Inventory Tool 2.0
+Description: Deploy Lambda to extract keyframes from an MP4
 
 Parameters:
 
@@ -7,18 +7,14 @@ Parameters:
     Description: Name of a bucket where all the Lambda deploy Zips are kept
     Type: String
 
-  pVideoBucket:
-    Description: Bucket where video files are read from and images written to
-    Type: String
-
   pLambdaZipFile:
     Description: File Name for the lambdas 
     Type: String
-    Default: inventory.zip
-  pLambdaPrefix:
-    Description: Where in the bucket the lambdas are stored 
+    Default: keyframe-extract.zip
+
+  pVideoBucket:
+    Description: Bucket where video files are read from and images written to
     Type: String
-    Default: lambda
 
   pAlarmTopicArn:
     Description: Topic to send alarm alerts to
@@ -28,6 +24,10 @@ Parameters:
     Description: FrameRate for extraction in fps. .25 is one frame per 4 sec ; .1 is one frame per 10sec
     Type: String
     Default: .25
+
+  pVersion:
+    Description: Version of the stack
+    Type: String
 
 Resources:
 
@@ -43,11 +43,6 @@ Resources:
             - lambda.amazonaws.com
           Action:
           - sts:AssumeRole
-        - Sid: EmuLambdaTestTrust
-          Effect: Allow
-          Principal:
-            AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
-          Action: sts:AssumeRole
       Path: /
       Policies:
       - PolicyName: S3Access
@@ -95,7 +90,7 @@ Resources:
       Role: !GetAtt ExtractLambdaRole.Arn
       Code:
         S3Bucket: !Ref pDeployBucket
-        S3Key: !Sub ${pLambdaPrefix}/${pLambdaZipFile}
+        S3Key: !Ref pLambdaZipFile
       Environment:
         Variables:
           OUTPUT_BUCKET: !Ref pVideoBucket
@@ -161,3 +156,6 @@ Outputs:
   TriggerTopicArn:
     Value: !Ref TriggerExtractFunctionTopic
     Description: Arn of the Topic to publish S3 Events to
+
+  Version:
+    Value: !Ref pVersion
